@@ -13,6 +13,8 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,7 @@ full = [
     "pyarrow>=17",
     "uvloop>=0.19; sys_platform != 'win32'",
     "httptools>=0.6",
+    "asyncpg>=0.29",
 ]
 dev = [
     "pytest>=8",
