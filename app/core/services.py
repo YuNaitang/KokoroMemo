@@ -12,6 +12,7 @@ from app.core.config import AppConfig
 from app.providers.embedding_base import EmbeddingProvider
 from app.providers.embedding_dummy import DummyEmbeddingProvider
 from app.providers.embedding_openai_compatible import OpenAICompatibleEmbeddingProvider
+from app.storage.database import is_server_mode
 
 try:
     from app.storage.lancedb_store import LanceDBStore
@@ -180,3 +181,36 @@ def get_lancedb_store(cfg: AppConfig) -> Any:
     _lancedb_store.connect()
     _lancedb_signature = signature
     return _lancedb_store
+
+
+def get_vector_store(cfg: AppConfig) -> Any:
+    """根据 server/file 模式返回对应的向量存储。
+
+    - 嵌入未启用时返回 None
+    - server 模式返回 PgVectorStore
+    - file 模式返回 LanceDBVectorStore
+    """
+    if not cfg.embedding.enabled:
+        return None
+
+    if is_server_mode():
+        from app.storage.vector_pgvector import PgVectorStore
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.storage.database import get_engine
+
+        engine = get_engine()
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        return PgVectorStore(
+            session_factory=session_factory,
+            dimension=cfg.embedding.dimension or 4096,
+        )
+
+    from app.storage.vector_lancedb import LanceDBVectorStore
+
+    lancedb_path = resolve_lancedb_path(cfg)
+    return LanceDBVectorStore(
+        db_path=lancedb_path,
+        table_name=cfg.storage.lancedb.table,
+        dimension=cfg.embedding.dimension or 4096,
+    )
