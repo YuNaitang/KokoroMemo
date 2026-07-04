@@ -49,7 +49,7 @@ class LLMConfig:
 class EmbeddingConfig:
     enabled: bool = True
     provider: str = "modelark"
-    base_url: str = "https://ai.gitee.com/v1"
+    base_url: str = ""
     api_key: str = ""
     api_key_env: str = "MODELARK_API_KEY"
     model: str = "Qwen3-Embedding-8B"
@@ -68,7 +68,7 @@ class EmbeddingConfig:
 class RerankConfig:
     enabled: bool = False
     provider: str = "modelark"
-    base_url: str = "https://ai.gitee.com/v1"
+    base_url: str = ""
     api_key: str = ""
     api_key_env: str = "MODELARK_API_KEY"
     model: str = "Qwen3-Reranker-8B"
@@ -365,6 +365,31 @@ def resolve_config_path(config_path: str | Path | None = None, for_write: bool =
     return None
 
 
+def _apply_env_overrides(cfg: AppConfig) -> None:
+    """环境变量覆盖配置值。"""
+    mapping = [
+        ("KOKOROMEMO_DB_URL", None),  # 在 database.py 中单独处理
+        ("LLM_API_KEY", lambda v: setattr(cfg.llm, "api_key", v)),
+        ("LLM_MODEL", lambda v: setattr(cfg.llm, "model", v)),
+        ("LLM_BASE_URL", lambda v: setattr(cfg.llm, "base_url", v)),
+        ("EMBEDDING_ENABLED", lambda v: setattr(cfg.embedding, "enabled", v.lower() in {"1", "true", "yes"})),
+        ("EMBEDDING_BASE_URL", lambda v: setattr(cfg.embedding, "base_url", v)),
+        ("EMBEDDING_API_KEY", lambda v: setattr(cfg.embedding, "api_key", v)),
+        ("EMBEDDING_MODEL", lambda v: setattr(cfg.embedding, "model", v)),
+        ("RERANK_BASE_URL", lambda v: setattr(cfg.rerank, "base_url", v)),
+        ("RERANK_API_KEY", lambda v: setattr(cfg.rerank, "api_key", v)),
+        ("RERANK_MODEL", lambda v: setattr(cfg.rerank, "model", v)),
+        ("ADMIN_TOKEN", lambda v: setattr(cfg.server, "admin_token", v)),
+        ("SERVER_PORT", lambda v: setattr(cfg.server, "port", int(v))),
+        ("SERVER_HOST", lambda v: setattr(cfg.server, "host", v)),
+        ("STORAGE_ROOT_DIR", lambda v: setattr(cfg.storage, "root_dir", v)),
+    ]
+    for env_key, apply_fn in mapping:
+        value = os.environ.get(env_key, "").strip()
+        if value and apply_fn:
+            apply_fn(value)
+
+
 def load_config(config_path: str | Path | None = None) -> AppConfig:
     """Load config from YAML file, falling back to defaults."""
     cfg = AppConfig()
@@ -398,5 +423,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             cfg.storage.lancedb.path = str(
                 Path(cfg.storage.root_dir) / Path(cfg.storage.lancedb.path).relative_to(default_root)
             )
+
+    _apply_env_overrides(cfg)
 
     return cfg
