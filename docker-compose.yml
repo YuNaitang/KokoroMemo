@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER_PORT:-14514}:14514"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - KOKOROMEMO_DB_URL=postgresql+asyncpg://kokoro:${DB_PASSWORD:-changeme}@db:5432/kokoromemo
+      - KOKOROMEMO_DB_HOST=db
+      - KOKOROMEMO_DB_USER=kokoro
+      - KOKOROMEMO_DB_NAME=kokoromemo
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: kokoromemo
+      POSTGRES_USER: kokoro
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kokoro -d kokoromemo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

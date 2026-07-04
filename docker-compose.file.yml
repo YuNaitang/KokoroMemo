@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER_PORT:-14514}:14514"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
