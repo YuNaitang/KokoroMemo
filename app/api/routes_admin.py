@@ -887,7 +887,7 @@ async def list_conversations_api(
 
     cfg = get_config()
     repo = get_repository()
-    items = await repo.list_conversations()
+    items = await repo.list_conversations(limit=limit, offset=offset)
     return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
@@ -1155,7 +1155,7 @@ async def list_inbox(
 
     cfg = get_config()
     repo = get_repository()
-    items = await repo.get_inbox_items(status=status, limit=limit)
+    items = await repo.get_inbox_items(status=status, limit=limit, offset=offset)
     return {"items": items, "total": len(items), "status": status}
 
 
@@ -1174,12 +1174,15 @@ async def approve_inbox_item(inbox_id: str):
     db_path = cfg.storage.sqlite.memory_db
     repo = get_repository()
 
+    # 读取待审核条目
     item = await repo.get_inbox_item(inbox_id)
     if not item:
         return {"status": "error", "message": "Inbox item not found"}
-    if item["status"] != "pending":
+
+    # 乐观锁：原子地检查并转换状态
+    claimed = await repo.transition_inbox_status(inbox_id, "approved", "pending")
+    if not claimed:
         return {"status": "error", "message": f"Item already {item['status']}"}
-    await repo.transition_inbox_status(inbox_id, "approved")
 
     try:
         payload = json_mod.loads(item["payload_json"])
@@ -1220,8 +1223,7 @@ async def approve_inbox_item(inbox_id: str):
                 warning = f"Vector sync failed: {e}"
                 await enqueue_card_vector_sync(db_path, card_id, str(e))
 
-        # 将待审核条目标记为已批准
-        await repo.transition_inbox_status(inbox_id, "approved")
+        # 记录审核操作
         await repo.insert_review_action(action={"action": "approve", "inbox_id": inbox_id, "card_id": card_id})
         result = {"status": "ok", "card_id": card_id}
         if warning:
@@ -1927,10 +1929,12 @@ async def reject_inbox_item(inbox_id: str, data=Body(default="")):
     db_path = cfg.storage.sqlite.memory_db
     repo = get_repository()
 
-    item = await repo.get_inbox_item(inbox_id)
-    if not item:
-        return {"status": "error", "message": "Inbox item not found"}
-    if item["status"] != "pending":
+    # 乐观锁：原子地检查并转换状态
+    claimed = await repo.transition_inbox_status(inbox_id, "rejected", "pending")
+    if not claimed:
+        item = await repo.get_inbox_item(inbox_id)
+        if not item:
+            return {"status": "error", "message": "Inbox item not found"}
         return {"status": "error", "message": f"Item already {item['status']}"}
     if isinstance(data, dict):
         note = str(data.get("note") or "")
@@ -1939,7 +1943,6 @@ async def reject_inbox_item(inbox_id: str, data=Body(default="")):
     else:
         note = str(data)
 
-    await repo.transition_inbox_status(inbox_id, "rejected")
     await repo.insert_review_action(action={"action": "reject", "inbox_id": inbox_id, "note": note})
     return {"status": "ok"}
 

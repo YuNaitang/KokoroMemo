@@ -30,6 +30,10 @@ class MemoryCard(Base):
     embedding_model: Mapped[str | None] = mapped_column(String, nullable=True)
     embedding_dimension: Mapped[int | None] = mapped_column(Integer, nullable=True)
     vector_synced: Mapped[int] = mapped_column(Integer, default=0)
+    source_turn_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vector_synced_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_accessed_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String)
     updated_at: Mapped[str] = mapped_column(String)
 
@@ -38,6 +42,11 @@ class ConversationStateItem(Base):
     __tablename__ = "conversation_state_items"
 
     item_id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    tab_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    field_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    world_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     character_id: Mapped[str | None] = mapped_column(String, nullable=True)
     conversation_id: Mapped[str] = mapped_column(String)

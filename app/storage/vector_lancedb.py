@@ -65,7 +65,7 @@ class LanceDBVectorStore(VectorStore):
             lambda: self._table.search(np.array(query_vector, dtype=np.float32)).limit(top_k).to_list(),
         )
         return [
-            VectorSearchResult(card_id=r["card_id"], score=r["_distance"], content=r.get("text"))
+            VectorSearchResult(card_id=r["card_id"], score=1.0 - (r["_distance"] / 2.0), content=r.get("text"))
             for r in results
         ]
 

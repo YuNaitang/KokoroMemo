@@ -19,7 +19,8 @@ class StorageRepository:
     """存储仓库，封装所有数据访问。"""
 
     def __init__(self):
-        self._db_path: str = str(Path("/app/data") / "app.sqlite")
+        import os
+        self._db_path: str = str(Path(os.getenv("KOKOROMEMO_DATA_DIR", "/app/data")) / "app.sqlite")
         self._server_mode = is_server_mode()
         self._vector_store: VectorStore | None = None
         self._engine = get_engine() if self._server_mode else None
@@ -406,7 +407,9 @@ class StorageRepository:
                 rows = [dict(r._mapping) for r in result.fetchall()]
             if not rows:
                 await self.set_conversation_mounts(conversation_id, ["lib_default"])
-                return await self.get_conversation_mounts(conversation_id)
+                # Re-query directly instead of recursing
+                result = await conn.execute(stmt, {"conv_id": conversation_id})
+                rows = [dict(r._mapping) for r in result.fetchall()]
             return rows
         from app.storage.sqlite_cards import get_conversation_mounts
         return await get_conversation_mounts(self._db_path, conversation_id)
@@ -511,20 +514,20 @@ class StorageRepository:
 
     # ── 待审核条目 ──
 
-    async def get_inbox_items(self, status: str | None = None, limit: int = 50) -> list[dict]:
+    async def get_inbox_items(self, status: str | None = None, limit: int = 50, offset: int = 0) -> list[dict]:
         if self._server_mode:
             from sqlalchemy import text
             stmt = text("""
                 SELECT * FROM memory_inbox
                 WHERE status = :status
                 ORDER BY created_at DESC
-                LIMIT :limit
+                LIMIT :limit OFFSET :offset
             """)
             async with self._engine.connect() as conn:
-                result = await conn.execute(stmt, {"status": status or "pending", "limit": limit})
+                result = await conn.execute(stmt, {"status": status or "pending", "limit": limit, "offset": offset})
                 return [dict(r._mapping) for r in result.fetchall()]
         from app.storage.sqlite_cards import get_inbox_items as _get_inbox
-        items, _total = await _get_inbox(self._db_path, status=status or "pending", limit=limit)
+        items, _total = await _get_inbox(self._db_path, status=status or "pending", limit=limit, offset=offset)
         return items
 
     async def get_inbox_item(self, item_id: str) -> dict | None:
@@ -617,22 +620,28 @@ class StorageRepository:
             note=action.get("note"),
         )
 
-    async def transition_inbox_status(self, item_id: str, new_status: str) -> None:
+    async def transition_inbox_status(self, item_id: str, new_status: str, current_status: str | None = None) -> bool:
         if self._server_mode:
             from sqlalchemy import text
             now = datetime.now().isoformat()
+            where_clause = "inbox_id = :item_id"
+            params = {"item_id": item_id, "status": new_status, "now": now}
+            if current_status:
+                where_clause += " AND status = :current_status"
+                params["current_status"] = current_status
             async with self._engine.begin() as conn:
-                await conn.execute(
-                    text("""
+                result = await conn.execute(
+                    text(f"""
                         UPDATE memory_inbox
                         SET status = :status, reviewed_at = :now, review_note = NULL
-                        WHERE inbox_id = :item_id
+                        WHERE {where_clause}
                     """),
-                    {"item_id": item_id, "status": new_status, "now": now},
+                    params,
                 )
-            return
+                return result.rowcount > 0
         from app.storage.sqlite_cards import update_inbox_status
         await update_inbox_status(self._db_path, item_id, new_status)
+        return True
 
     async def mark_card_vector_unsynced(self, card_id: str) -> None:
         if self._server_mode:
@@ -967,7 +976,7 @@ class StorageRepository:
         from app.storage.sqlite_app import list_character_conversations
         return await list_character_conversations(self._db_path, character_id)
 
-    async def list_conversations(self) -> list[dict]:
+    async def list_conversations(self, limit: int = 50, offset: int = 0) -> list[dict]:
         if self._server_mode:
             from sqlalchemy import text
             async with self._engine.connect() as conn:
@@ -976,12 +985,13 @@ class StorageRepository:
                         SELECT conversation_id, user_id, character_id, client_name, last_seen_at, first_seen_at
                         FROM conversations
                         ORDER BY last_seen_at DESC
-                        LIMIT 50
-                    """)
+                        LIMIT :limit OFFSET :offset
+                    """),
+                    {"limit": limit, "offset": offset},
                 )
                 return [dict(r._mapping) for r in result.fetchall()]
         from app.storage.sqlite_app import list_conversations as _list_conv
-        items, _total = await _list_conv(self._db_path)
+        items, _total = await _list_conv(self._db_path, limit=limit, offset=offset)
         return items
 
     async def delete_conversation(self, conversation_id: str) -> bool:
