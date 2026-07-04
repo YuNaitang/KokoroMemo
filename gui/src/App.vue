@@ -100,7 +100,7 @@ async function syncCloseToTraySetting() {
 onMounted(syncCloseToTraySetting)
 
 async function openGitHub() {
-  const url = 'https://github.com/CyrilPeng/KokoroMemo'
+  const url = 'https://github.com/YuNaitang/KokoroMemo'
   if ((window as any).__TAURI_INTERNALS__) {
     try {
       const { open } = await import('@tauri-apps/plugin-shell')

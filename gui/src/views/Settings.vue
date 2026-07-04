@@ -67,10 +67,9 @@ const updateInfo = ref<{
   error: '',
 })
 const UPDATE_MANIFEST_URLS = [
-  { name: 'GitHub', url: 'https://github.com/CyrilPeng/KokoroMemo/releases/latest/download/latest.json' },
-  { name: 'GitHub Proxy', url: 'https://gh-proxy.org/https://github.com/CyrilPeng/KokoroMemo/releases/latest/download/latest.json' },
+  { name: 'GitHub', url: 'https://github.com/YuNaitang/KokoroMemo/releases/latest/download/latest.json' },
+  { name: 'GitHub Proxy', url: 'https://gh-proxy.org/https://github.com/YuNaitang/KokoroMemo/releases/latest/download/latest.json' },
 ]
-const GITEE_LATEST_RELEASE_API = 'https://gitee.com/api/v5/repos/Cyril_P/KokoroMemo/releases/latest'
 const CURRENT_VERSION_FALLBACK = '0.8.0'
 
 const currentBackendUrl = computed(() => backendUrl.value || getServerUrl())
@@ -135,24 +134,6 @@ async function fetchJsonWithTimeout(url: string, timeoutMs = 8000) {
   }
 }
 
-async function fetchGiteeUpdateManifest() {
-  const release = await fetchJsonWithTimeout(GITEE_LATEST_RELEASE_API)
-  const tag = release?.tag_name || release?.name
-  const attachments = Array.isArray(release?.attach_files)
-    ? release.attach_files
-    : Array.isArray(release?.assets)
-      ? release.assets
-      : []
-  const manifestAsset = attachments.find((item: any) => (item?.name || item?.filename) === 'latest.json')
-  const manifestUrl = manifestAsset?.browser_download_url
-    || manifestAsset?.download_url
-    || manifestAsset?.url
-    || manifestAsset?.html_url
-    || (tag ? `https://gitee.com/Cyril_P/KokoroMemo/releases/download/${tag}/latest.json` : '')
-  if (!manifestUrl) throw new Error('missing latest manifest')
-  return await fetchJsonWithTimeout(manifestUrl)
-}
-
 async function fetchUpdateManifest() {
   let lastError = ''
   for (const source of UPDATE_MANIFEST_URLS) {
@@ -161,11 +142,6 @@ async function fetchUpdateManifest() {
     } catch (e) {
       lastError = `${source.name}: ${e instanceof Error ? e.message : String(e)}`
     }
-  }
-  try {
-    return { sourceName: 'Gitee', data: await fetchGiteeUpdateManifest() }
-  } catch (e) {
-    lastError = `Gitee: ${e instanceof Error ? e.message : String(e)}`
   }
   throw new Error(lastError || 'manifest unavailable')
 }
@@ -189,7 +165,7 @@ async function checkForUpdates(silent = false) {
     const currentVersion = await getCurrentAppVersion()
     const { sourceName, data } = await fetchUpdateManifest()
     const latestVersion = data.version || data.tag || ''
-    const releaseUrl = data.release_url || data.changelog_url || 'https://github.com/CyrilPeng/KokoroMemo/releases/latest'
+    const releaseUrl = data.release_url || data.changelog_url || 'https://github.com/YuNaitang/KokoroMemo/releases/latest'
     const { assetName, downloadUrl } = pickUpdateAsset(data)
     const hasUpdate = latestVersion ? compareVersions(latestVersion, currentVersion) > 0 : false
     updateInfo.value = {
@@ -961,7 +937,7 @@ onMounted(() => {
               </NFormItem>
               <template v-if="config.embedding_enabled">
                 <NFormItem label="Base URL">
-                  <NInput v-model:value="config.embedding_base_url" placeholder="https://ai.gitee.com/v1" />
+                  <NInput v-model:value="config.embedding_base_url" placeholder="https://api.openai.com/v1" />
                 </NFormItem>
                 <NFormItem label="API Key">
                   <NInput v-model:value="config.embedding_api_key" type="password" show-password-on="click" :placeholder="$t('settings.embeddingApiKeyPlaceholder')" />
@@ -994,7 +970,7 @@ onMounted(() => {
               </NFormItem>
               <template v-if="config.rerank_enabled">
                 <NFormItem label="Base URL">
-                  <NInput v-model:value="config.rerank_base_url" placeholder="https://ai.gitee.com/v1" />
+                  <NInput v-model:value="config.rerank_base_url" placeholder="https://api.openai.com/v1" />
                 </NFormItem>
                 <NFormItem label="API Key">
                   <NInput v-model:value="config.rerank_api_key" type="password" show-password-on="click" :placeholder="$t('settings.rerankApiKeyPlaceholder')" />

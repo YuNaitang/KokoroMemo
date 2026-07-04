@@ -30,7 +30,7 @@ llm:
 embedding:
   enabled: true
   provider: "modelark"
-  base_url: "https://ai.gitee.com/v1"
+  base_url: ""
   api_key: ""
   api_key_env: "MODELARK_API_KEY"
   model: "Qwen3-Embedding-8B"
@@ -42,7 +42,7 @@ embedding:
 rerank:
   enabled: false
   provider: "modelark"
-  base_url: "https://ai.gitee.com/v1"
+  base_url: ""
   api_key: ""
   api_key_env: "MODELARK_API_KEY"
   model: "Qwen3-Reranker-8B"

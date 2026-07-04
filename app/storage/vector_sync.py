@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 
 from app.providers.embedding_base import EmbeddingProvider
+from app.storage import get_repository
 from app.storage.sqlite_cards import (
     enqueue_job,
-    get_cards_by_ids,
     get_pending_jobs,
     mark_card_vector_synced,
     update_job_status,
@@ -20,7 +20,9 @@ async def sync_card_vector(
     embedding_provider: EmbeddingProvider,
     lancedb_store,
 ) -> None:
-    cards = await get_cards_by_ids(db_path, [card_id])
+    repo = get_repository()
+    cards_list = await repo.get_cards_by_ids([card_id])
+    cards = {c["card_id"]: c for c in cards_list}
     card = cards.get(card_id)
     if not card or card.get("status") != "approved":
         return

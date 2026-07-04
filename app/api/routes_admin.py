@@ -51,14 +51,15 @@ async def get_conversation_config_api(conversation_id: str, request: Request):
     """Get conversation policy config with legacy summary fields."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_cards import get_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
     store = SQLiteStateStore(db_path)
     config = await store.ensure_conversation_config(conversation_id)
-    mounts = await get_conversation_mounts(db_path, conversation_id)
+    mounts = await repo.get_conversation_mounts(conversation_id)
     mounted_library_ids = [mount["library_id"] for mount in mounts]
     write_library_id = next(
         (mount["library_id"] for mount in mounts if mount.get("is_write_target")),
@@ -84,13 +85,14 @@ async def update_conversation_config_api(conversation_id: str, request: Request,
     """Update policy config for a conversation."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_cards import set_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     payload = dict(data)
     payload["conversation_id"] = conversation_id
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
     store = SQLiteStateStore(db_path)
     if payload.get("template_id") and not await store.get_template(payload["template_id"]):
         raise HTTPException(status_code=404, detail="Template not found")
@@ -98,13 +100,9 @@ async def update_conversation_config_api(conversation_id: str, request: Request,
         raise HTTPException(status_code=404, detail="State table template not found")
     library_ids = payload.get("library_ids") or payload.get("mounted_library_ids") or []
     if library_ids:
-        await set_conversation_mounts(
-            db_path,
+        await repo.set_conversation_mounts(
             conversation_id=conversation_id,
             library_ids=library_ids,
-            write_library_id=payload.get("write_library_id"),
-            user_id=payload.get("user_id"),
-            character_id=payload.get("character_id"),
         )
     config = await store.set_conversation_config(payload)
     return {"status": "ok", "config": config.to_dict()}
@@ -595,10 +593,11 @@ async def list_characters_api(request: Request):
     """List all known characters with their default configurations."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import list_characters
+    from app.storage import get_repository
 
     cfg = get_config()
-    items = await list_characters(cfg.storage.sqlite.app_db)
+    repo = get_repository()
+    items = await repo.list_characters()
     return {"items": items}
 
 
@@ -607,10 +606,11 @@ async def get_character_api(character_id: str, request: Request):
     """Get one character profile and default strategy."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import list_characters
+    from app.storage import get_repository
 
     cfg = get_config()
-    for item in await list_characters(cfg.storage.sqlite.app_db):
+    repo = get_repository()
+    for item in await repo.list_characters():
         if item.get("character_id") == character_id:
             return item
     raise HTTPException(status_code=404, detail="Character not found")
@@ -621,18 +621,17 @@ async def update_character_api(character_id: str, request: Request, data: dict =
     """Update character profile fields."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import update_character_profile
+    from app.storage import get_repository
 
     cfg = get_config()
-    await update_character_profile(
-        cfg.storage.sqlite.app_db,
-        character_id,
-        display_name=data.get("display_name"),
-        aliases=data.get("aliases") or [],
-        notes=data.get("notes"),
-        source=data.get("source"),
-        user_id=data.get("user_id") or "default",
-    )
+    repo = get_repository()
+    await repo.update_character_profile(character_id, profile={
+        "display_name": data.get("display_name"),
+        "aliases": data.get("aliases") or [],
+        "notes": data.get("notes"),
+        "source": data.get("source"),
+        "user_id": data.get("user_id") or "default",
+    })
     return {"status": "ok", "character_id": character_id}
 
 
@@ -641,13 +640,14 @@ async def list_character_conversations_api(character_id: str, request: Request):
     """List conversations associated with one character, including state config when present."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import list_character_conversations
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     cfg = get_config()
+    repo = get_repository()
     store = SQLiteStateStore(cfg.storage.sqlite.memory_db)
     items = []
-    for conv in await list_character_conversations(cfg.storage.sqlite.app_db, character_id):
+    for conv in await repo.list_character_conversations(character_id):
         config = await store.get_conversation_config(conv["conversation_id"])
         row = dict(conv)
         row["config"] = config.to_dict() if config else None
@@ -660,10 +660,11 @@ async def discover_characters_api(request: Request):
     """Discover characters from conversations and merge default configs."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import discover_characters
+    from app.storage import get_repository
 
     cfg = get_config()
-    items = await discover_characters(cfg.storage.sqlite.app_db)
+    repo = get_repository()
+    items = await repo.discover_characters()
     return {"items": items}
 
 
@@ -672,10 +673,11 @@ async def get_character_defaults_api(character_id: str, request: Request):
     """Get default config for a character."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import get_character_defaults
+    from app.storage import get_repository
 
     cfg = get_config()
-    defaults = await get_character_defaults(cfg.storage.sqlite.app_db, character_id)
+    repo = get_repository()
+    defaults = await repo.get_character_defaults(character_id)
     if not defaults:
         return {"character_id": character_id, "template_id": None, "library_ids": None, "write_library_id": None, "auto_apply": True}
     return defaults
@@ -686,23 +688,22 @@ async def set_character_defaults_api(character_id: str, request: Request, data: 
     """Set default template and library config for a character."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import set_character_defaults
+    from app.storage import get_repository
 
     cfg = get_config()
-    await set_character_defaults(
-        cfg.storage.sqlite.app_db,
-        character_id,
-        profile_id=data.get("profile_id"),
-        template_id=data.get("template_id"),
-        table_template_id=data.get("table_template_id"),
-        mount_preset_id=data.get("mount_preset_id"),
-        memory_write_policy=data.get("memory_write_policy"),
-        state_update_policy=data.get("state_update_policy"),
-        injection_policy=data.get("injection_policy"),
-        library_ids=data.get("library_ids"),
-        write_library_id=data.get("write_library_id"),
-        auto_apply=data.get("auto_apply", True),
-    )
+    repo = get_repository()
+    await repo.set_character_defaults(character_id, data={
+        "profile_id": data.get("profile_id"),
+        "template_id": data.get("template_id"),
+        "table_template_id": data.get("table_template_id"),
+        "mount_preset_id": data.get("mount_preset_id"),
+        "memory_write_policy": data.get("memory_write_policy"),
+        "state_update_policy": data.get("state_update_policy"),
+        "injection_policy": data.get("injection_policy"),
+        "library_ids": data.get("library_ids"),
+        "write_library_id": data.get("write_library_id"),
+        "auto_apply": data.get("auto_apply", True),
+    })
     return {"status": "ok", "character_id": character_id}
 
 
@@ -716,17 +717,17 @@ async def apply_character_defaults_api(character_id: str, request: Request, data
     """Apply character default mounts and conversation config to existing conversations."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import get_character_defaults, list_character_conversations
-    from app.storage.sqlite_cards import set_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     cfg = get_config()
-    defaults = await get_character_defaults(cfg.storage.sqlite.app_db, character_id)
+    repo = get_repository()
+    defaults = await repo.get_character_defaults(character_id)
     if not defaults:
         raise HTTPException(status_code=404, detail="Character defaults not found")
 
     selected = set(data.get("conversation_ids") or [])
-    conversations = await list_character_conversations(cfg.storage.sqlite.app_db, character_id)
+    conversations = await repo.list_character_conversations(character_id)
     if selected:
         conversations = [item for item in conversations if item["conversation_id"] in selected]
 
@@ -739,11 +740,9 @@ async def apply_character_defaults_api(character_id: str, request: Request, data
         conversation_id = conv["conversation_id"]
         if apply_mounts:
             library_ids = defaults.get("library_ids") or ["lib_default"]
-            await set_conversation_mounts(
-                cfg.storage.sqlite.memory_db,
+            await repo.set_conversation_mounts(
                 conversation_id,
                 library_ids,
-                defaults.get("write_library_id") or library_ids[0],
             )
         if apply_policy:
             existing = await store.get_conversation_config(conversation_id)
@@ -768,11 +767,12 @@ async def export_character_config_api(character_id: str, request: Request):
     """Export one character profile and default strategy."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import get_character_defaults, list_characters
+    from app.storage import get_repository
 
     cfg = get_config()
+    repo = get_repository()
     character = None
-    for item in await list_characters(cfg.storage.sqlite.app_db):
+    for item in await repo.list_characters():
         if item.get("character_id") == character_id:
             character = item
             break
@@ -781,7 +781,7 @@ async def export_character_config_api(character_id: str, request: Request):
     return {
         "version": 1,
         "character": character,
-        "defaults": await get_character_defaults(cfg.storage.sqlite.app_db, character_id),
+        "defaults": await repo.get_character_defaults(character_id),
     }
 
 
@@ -790,37 +790,34 @@ async def import_character_config_api(request: Request, data: dict = Body(...)):
     """Import one character profile and default strategy."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_app import set_character_defaults, update_character_profile
+    from app.storage import get_repository
 
     cfg = get_config()
+    repo = get_repository()
     character = data.get("character") or {}
     defaults = data.get("defaults") or {}
     character_id = data.get("target_character_id") or character.get("character_id") or defaults.get("character_id")
     if not character_id:
         raise HTTPException(status_code=400, detail="character_id is required")
-    await update_character_profile(
-        cfg.storage.sqlite.app_db,
-        character_id,
-        display_name=character.get("display_name"),
-        aliases=character.get("aliases") or [],
-        notes=character.get("notes"),
-        source=character.get("source"),
-        user_id=character.get("user_id") or "default",
-    )
-    await set_character_defaults(
-        cfg.storage.sqlite.app_db,
-        character_id,
-        profile_id=defaults.get("profile_id"),
-        template_id=defaults.get("template_id"),
-        table_template_id=defaults.get("table_template_id"),
-        mount_preset_id=defaults.get("mount_preset_id"),
-        memory_write_policy=defaults.get("memory_write_policy"),
-        state_update_policy=defaults.get("state_update_policy"),
-        injection_policy=defaults.get("injection_policy"),
-        library_ids=defaults.get("library_ids"),
-        write_library_id=defaults.get("write_library_id"),
-        auto_apply=defaults.get("auto_apply", True),
-    )
+    await repo.update_character_profile(character_id, profile={
+        "display_name": character.get("display_name"),
+        "aliases": character.get("aliases") or [],
+        "notes": character.get("notes"),
+        "source": character.get("source"),
+        "user_id": character.get("user_id") or "default",
+    })
+    await repo.set_character_defaults(character_id, data={
+        "profile_id": defaults.get("profile_id"),
+        "template_id": defaults.get("template_id"),
+        "table_template_id": defaults.get("table_template_id"),
+        "mount_preset_id": defaults.get("mount_preset_id"),
+        "memory_write_policy": defaults.get("memory_write_policy"),
+        "state_update_policy": defaults.get("state_update_policy"),
+        "injection_policy": defaults.get("injection_policy"),
+        "library_ids": defaults.get("library_ids"),
+        "write_library_id": defaults.get("write_library_id"),
+        "auto_apply": defaults.get("auto_apply", True),
+    })
     return {"status": "ok", "character_id": character_id}
 
 
@@ -828,10 +825,11 @@ async def import_character_config_api(request: Request, data: dict = Body(...)):
 async def list_memory_libraries_api():
     """List long-term memory libraries."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import list_memory_libraries
+    from app.storage import get_repository
 
     cfg = get_config()
-    items = await list_memory_libraries(cfg.storage.sqlite.memory_db)
+    repo = get_repository()
+    items = await repo.list_memory_libraries()
     return {"items": items}
 
 
@@ -839,14 +837,13 @@ async def list_memory_libraries_api():
 async def create_memory_library_api(data: dict = Body(...)):
     """Create a memory library or save selected libraries as a new preset."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import create_memory_library
+    from app.storage import get_repository
 
     cfg = get_config()
-    library_id = await create_memory_library(
-        cfg.storage.sqlite.memory_db,
+    repo = get_repository()
+    library_id = await repo.create_memory_library(
         name=data.get("name") or "未命名记忆库",
         description=data.get("description", ""),
-        source_library_ids=data.get("source_library_ids") or [],
     )
     return {"status": "ok", "library_id": library_id}
 
@@ -855,11 +852,11 @@ async def create_memory_library_api(data: dict = Body(...)):
 async def update_memory_library_api(library_id: str, data: dict = Body(...)):
     """Rename or describe a memory library."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import update_memory_library
+    from app.storage import get_repository
 
     cfg = get_config()
-    ok = await update_memory_library(
-        cfg.storage.sqlite.memory_db,
+    repo = get_repository()
+    ok = await repo.update_memory_library(
         library_id=library_id,
         name=data.get("name") or "未命名记忆库",
         description=data.get("description", ""),
@@ -871,10 +868,11 @@ async def update_memory_library_api(library_id: str, data: dict = Body(...)):
 async def delete_memory_library_api(library_id: str):
     """Soft-delete a custom memory library."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import delete_memory_library
+    from app.storage import get_repository
 
     cfg = get_config()
-    ok = await delete_memory_library(cfg.storage.sqlite.memory_db, library_id)
+    repo = get_repository()
+    ok = await repo.delete_memory_library(library_id)
     return {"status": "ok" if ok else "error", "message": None if ok else "默认记忆库不能删除或记忆库不存在"}
 
 
@@ -885,21 +883,23 @@ async def list_conversations_api(
 ):
     """List recent conversations ordered by last activity."""
     from app.core.state import get_config
-    from app.storage.sqlite_app import list_conversations
+    from app.storage import get_repository
 
     cfg = get_config()
-    items, total = await list_conversations(cfg.storage.sqlite.app_db, limit=limit, offset=offset)
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    repo = get_repository()
+    items = await repo.list_conversations()
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
 
 
 @router.delete("/admin/conversations/{conversation_id}")
 async def delete_conversation_api(conversation_id: str):
     """Delete a conversation record."""
     from app.core.state import get_config
-    from app.storage.sqlite_app import delete_conversation
+    from app.storage import get_repository
 
     cfg = get_config()
-    ok = await delete_conversation(cfg.storage.sqlite.app_db, conversation_id)
+    repo = get_repository()
+    ok = await repo.delete_conversation(conversation_id)
     return {"status": "ok" if ok else "error", "message": None if ok else "会话不存在"}
 
 
@@ -907,10 +907,11 @@ async def delete_conversation_api(conversation_id: str):
 async def get_conversation_memory_mounts_api(conversation_id: str):
     """Get mounted long-term memory libraries for a conversation."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import get_conversation_mounts
+    from app.storage import get_repository
 
     cfg = get_config()
-    mounts = await get_conversation_mounts(cfg.storage.sqlite.memory_db, conversation_id)
+    repo = get_repository()
+    mounts = await repo.get_conversation_mounts(conversation_id)
     return {"items": mounts}
 
 
@@ -918,17 +919,14 @@ async def get_conversation_memory_mounts_api(conversation_id: str):
 async def set_conversation_memory_mounts_api(conversation_id: str, data: dict = Body(...)):
     """Set mounted long-term memory libraries for a conversation."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import set_conversation_mounts
+    from app.storage import get_repository
 
     cfg = get_config()
+    repo = get_repository()
     library_ids = data.get("library_ids") or []
-    await set_conversation_mounts(
-        cfg.storage.sqlite.memory_db,
+    await repo.set_conversation_mounts(
         conversation_id=conversation_id,
         library_ids=library_ids,
-        write_library_id=data.get("write_library_id"),
-        user_id=data.get("user_id"),
-        character_id=data.get("character_id"),
     )
     return {"status": "ok"}
 
@@ -939,39 +937,37 @@ async def create_memory_card(data: dict = Body(...)):
     from app.core.ids import generate_id
     from app.core.services import get_embedding_provider, get_lancedb_store
     from app.core.state import get_config
-    from app.storage.sqlite_cards import insert_card, insert_card_version
+    from app.storage import get_repository
     from app.storage.vector_sync import enqueue_card_vector_sync, sync_card_vector
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
     card_id = generate_id("card_")
-    await insert_card(
-        db_path,
-        card_id=card_id,
-        library_id=data.get("library_id"),
-        user_id=data.get("user_id") or "default_user",
-        character_id=data.get("character_id"),
-        conversation_id=data.get("conversation_id"),
-        scope=data.get("scope", "global"),
-        card_type=data.get("card_type", "preference"),
-        title=data.get("title"),
-        content=data.get("content", ""),
-        summary=data.get("summary"),
-        importance=float(data.get("importance", 0.5)),
-        confidence=float(data.get("confidence", 0.7)),
-        status=data.get("status", "approved"),
-        is_pinned=1 if data.get("is_pinned") else 0,
-        evidence_text=data.get("evidence_text"),
-    )
-    await insert_card_version(
-        db_path,
-        card_id=card_id,
-        content=data.get("content", ""),
-        card_type=data.get("card_type", "preference"),
-        summary=data.get("summary"),
-        importance=float(data.get("importance", 0.5)),
-        confidence=float(data.get("confidence", 0.7)),
-    )
+    await repo.insert_card(card={
+        "card_id": card_id,
+        "library_id": data.get("library_id"),
+        "user_id": data.get("user_id") or "default_user",
+        "character_id": data.get("character_id"),
+        "conversation_id": data.get("conversation_id"),
+        "scope": data.get("scope", "global"),
+        "card_type": data.get("card_type", "preference"),
+        "title": data.get("title"),
+        "content": data.get("content", ""),
+        "summary": data.get("summary"),
+        "importance": float(data.get("importance", 0.5)),
+        "confidence": float(data.get("confidence", 0.7)),
+        "status": data.get("status", "approved"),
+        "is_pinned": 1 if data.get("is_pinned") else 0,
+        "evidence_text": data.get("evidence_text"),
+    })
+    await repo.insert_card_version(card_id, card={
+        "content": data.get("content", ""),
+        "card_type": data.get("card_type", "preference"),
+        "summary": data.get("summary"),
+        "importance": float(data.get("importance", 0.5)),
+        "confidence": float(data.get("confidence", 0.7)),
+    })
     if data.get("status", "approved") == "approved":
         ep = get_embedding_provider(cfg)
         store = get_lancedb_store(cfg)
@@ -988,12 +984,13 @@ async def update_memory_card(card_id: str, data: dict = Body(...)):
     """Edit a memory card's content, type, or importance."""
     from app.core.services import get_embedding_provider, get_lancedb_store
     from app.core.state import get_config
-    from app.storage.sqlite_cards import insert_card_version, mark_card_vector_unsynced
+    from app.storage import get_repository
     from app.storage.vector_sync import enqueue_card_vector_sync, sync_card_vector
     import aiosqlite
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
     allowed_fields = {"library_id", "content", "card_type", "scope", "importance", "confidence", "title", "summary", "is_pinned"}
     updates = {k: v for k, v in data.items() if k in allowed_fields}
@@ -1015,22 +1012,20 @@ async def update_memory_card(card_id: str, data: dict = Body(...)):
         row = await cursor.fetchone()
 
     if row and row["status"] == "approved":
-        await insert_card_version(
-            db_path,
-            card_id=row["card_id"],
-            content=row["content"],
-            card_type=row["card_type"],
-            summary=row["summary"],
-            importance=row["importance"],
-            confidence=row["confidence"],
-        )
+        await repo.insert_card_version(row["card_id"], card={
+            "content": row["content"],
+            "card_type": row["card_type"],
+            "summary": row["summary"],
+            "importance": row["importance"],
+            "confidence": row["confidence"],
+        })
         ep = get_embedding_provider(cfg)
         store = get_lancedb_store(cfg)
         if ep and store:
             try:
                 await sync_card_vector(db_path, card_id, ep, store)
             except Exception as exc:
-                await mark_card_vector_unsynced(db_path, card_id)
+                await repo.mark_card_vector_unsynced(card_id)
                 await enqueue_card_vector_sync(db_path, card_id, str(exc))
 
     return {"status": "ok", "card_id": card_id}
@@ -1068,11 +1063,12 @@ async def deprecate_memory_card(card_id: str, note: str = Body(default="")):
     """Mark a memory card as deprecated so it is no longer recalled by default."""
     from app.core.services import get_lancedb_store
     from app.core.state import get_config
-    from app.storage.sqlite_cards import insert_review_action
+    from app.storage import get_repository
     import aiosqlite
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
@@ -1081,7 +1077,7 @@ async def deprecate_memory_card(card_id: str, note: str = Body(default="")):
         )
         await db.commit()
 
-    await insert_review_action(db_path, action="deprecate", card_id=card_id, note=note)
+    await repo.insert_review_action(action={"action": "deprecate", "card_id": card_id, "note": note})
 
     store = get_lancedb_store(cfg)
     if store:
@@ -1155,11 +1151,12 @@ async def list_inbox(
 ):
     """List memory inbox items."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import get_inbox_items
+    from app.storage import get_repository
 
     cfg = get_config()
-    items, total = await get_inbox_items(cfg.storage.sqlite.memory_db, status=status, limit=limit, offset=offset)
-    return {"items": items, "total": total, "status": status}
+    repo = get_repository()
+    items = await repo.get_inbox_items(status=status, limit=limit)
+    return {"items": items, "total": len(items), "status": status}
 
 
 @router.post("/admin/inbox/{inbox_id}/approve")
@@ -1169,25 +1166,20 @@ async def approve_inbox_item(inbox_id: str):
     from app.core.services import get_embedding_provider, get_lancedb_store
     from app.core.state import get_config
     from app.core.ids import generate_id
-    from app.storage.sqlite_cards import (
-        get_inbox_item, update_inbox_status, insert_card, insert_card_version,
-        insert_review_action, get_write_library_id, transition_inbox_status,
-    )
+    from app.storage import get_repository
+    from app.storage.sqlite_cards import get_write_library_id
     from app.storage.vector_sync import enqueue_card_vector_sync, sync_card_vector
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
-    item = await get_inbox_item(db_path, inbox_id)
+    item = await repo.get_inbox_item(inbox_id)
     if not item:
         return {"status": "error", "message": "Inbox item not found"}
     if item["status"] != "pending":
         return {"status": "error", "message": f"Item already {item['status']}"}
-    claimed = await transition_inbox_status(db_path, inbox_id, "pending", "approving")
-    if not claimed:
-        latest = await get_inbox_item(db_path, inbox_id)
-        latest_status = latest["status"] if latest else "missing"
-        return {"status": "error", "message": f"Item already {latest_status}"}
+    await repo.transition_inbox_status(inbox_id, "approved")
 
     try:
         payload = json_mod.loads(item["payload_json"])
@@ -1195,30 +1187,27 @@ async def approve_inbox_item(inbox_id: str):
         # 创建已批准卡片
         card_id = generate_id("card_")
         library_id = payload.get("library_id") or await get_write_library_id(db_path, payload.get("conversation_id") or "default")
-        await insert_card(
-            db_path,
-            card_id=card_id,
-            library_id=library_id,
-            user_id=payload.get("user_id", ""),
-            character_id=payload.get("character_id"),
-            conversation_id=payload.get("conversation_id"),
-            scope=payload.get("scope", "global"),
-            card_type=payload.get("card_type", "preference"),
-            content=payload.get("content", ""),
-            importance=payload.get("importance", 0.5),
-            confidence=payload.get("confidence", 0.7),
-            status="approved",
-            evidence_text=payload.get("evidence_text"),
-        )
-        await insert_card_version(
-            db_path,
-            card_id=card_id,
-            content=payload.get("content", ""),
-            card_type=payload.get("card_type", "preference"),
-            summary=payload.get("summary"),
-            importance=payload.get("importance", 0.5),
-            confidence=payload.get("confidence", 0.7),
-        )
+        await repo.insert_card(card={
+            "card_id": card_id,
+            "library_id": library_id,
+            "user_id": payload.get("user_id", ""),
+            "character_id": payload.get("character_id"),
+            "conversation_id": payload.get("conversation_id"),
+            "scope": payload.get("scope", "global"),
+            "card_type": payload.get("card_type", "preference"),
+            "content": payload.get("content", ""),
+            "importance": payload.get("importance", 0.5),
+            "confidence": payload.get("confidence", 0.7),
+            "status": "approved",
+            "evidence_text": payload.get("evidence_text"),
+        })
+        await repo.insert_card_version(card_id, card={
+            "content": payload.get("content", ""),
+            "card_type": payload.get("card_type", "preference"),
+            "summary": payload.get("summary"),
+            "importance": payload.get("importance", 0.5),
+            "confidence": payload.get("confidence", 0.7),
+        })
 
         # 向量同步
         warning = None
@@ -1232,14 +1221,14 @@ async def approve_inbox_item(inbox_id: str):
                 await enqueue_card_vector_sync(db_path, card_id, str(e))
 
         # 将待审核条目标记为已批准
-        await update_inbox_status(db_path, inbox_id, "approved")
-        await insert_review_action(db_path, action="approve", inbox_id=inbox_id, card_id=card_id)
+        await repo.transition_inbox_status(inbox_id, "approved")
+        await repo.insert_review_action(action={"action": "approve", "inbox_id": inbox_id, "card_id": card_id})
         result = {"status": "ok", "card_id": card_id}
         if warning:
             result["warning"] = warning
         return result
     except Exception:
-        await update_inbox_status(db_path, inbox_id, "pending")
+        await repo.transition_inbox_status(inbox_id, "pending")
         raise
 
 
@@ -1932,12 +1921,13 @@ async def fill_conversation_state_once(conversation_id: str, request: Request, d
 async def reject_inbox_item(inbox_id: str, data=Body(default="")):
     """Reject an inbox item."""
     from app.core.state import get_config
-    from app.storage.sqlite_cards import get_inbox_item, insert_review_action, transition_inbox_status
+    from app.storage import get_repository
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
-    item = await get_inbox_item(db_path, inbox_id)
+    item = await repo.get_inbox_item(inbox_id)
     if not item:
         return {"status": "error", "message": "Inbox item not found"}
     if item["status"] != "pending":
@@ -1949,12 +1939,8 @@ async def reject_inbox_item(inbox_id: str, data=Body(default="")):
     else:
         note = str(data)
 
-    claimed = await transition_inbox_status(db_path, inbox_id, "pending", "rejected", review_note=note)
-    if not claimed:
-        latest = await get_inbox_item(db_path, inbox_id)
-        latest_status = latest["status"] if latest else "missing"
-        return {"status": "error", "message": f"Item already {latest_status}"}
-    await insert_review_action(db_path, action="reject", inbox_id=inbox_id, note=note)
+    await repo.transition_inbox_status(inbox_id, "rejected")
+    await repo.insert_review_action(action={"action": "reject", "inbox_id": inbox_id, "note": note})
     return {"status": "ok"}
 
 
@@ -1977,7 +1963,7 @@ async def copy_conversation_state(conversation_id: str, request: Request, data: 
     """Copy state items and optionally mounts to a target conversation."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_cards import copy_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     target_id = data.get("target_conversation_id")
@@ -1988,13 +1974,14 @@ async def copy_conversation_state(conversation_id: str, request: Request, data: 
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
     store = SQLiteStateStore(db_path)
     copied_items = await store.copy_state_items(conversation_id, target_id)
 
     copied_mounts = 0
     if data.get("copy_mounts", True):
-        copied_mounts = await copy_conversation_mounts(db_path, conversation_id, target_id)
+        await repo.copy_conversation_mounts(conversation_id, target_id)
 
     return {"status": "ok", "copied_items": copied_items, "copied_mounts": copied_mounts}
 
@@ -2016,13 +2003,14 @@ async def export_conversation_state_bundle(conversation_id: str, request: Reques
     """Export a conversation state-board bundle: config, template snapshot, mounts, and state items."""
     _require_admin(request)
     from app.core.state import get_config
-    from app.storage.sqlite_cards import get_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
     store = SQLiteStateStore(db_path)
-    mounts = await get_conversation_mounts(db_path, conversation_id)
+    mounts = await repo.get_conversation_mounts(conversation_id)
     mounted_library_ids = [mount["library_id"] for mount in mounts]
     write_library_id = next(
         (mount["library_id"] for mount in mounts if mount.get("is_write_target")),
@@ -2052,11 +2040,12 @@ async def import_conversation_state_bundle(request: Request, data: dict = Body(.
     from app.core.ids import sanitize_id
     from app.core.state import get_config
     from app.memory.state_schema import ConversationStateItem
-    from app.storage.sqlite_cards import set_conversation_mounts
+    from app.storage import get_repository
     from app.storage.sqlite_state import SQLiteStateStore
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
     source_conversation_id = data.get("conversation_id") or "imported"
     target_conversation_id = sanitize_id(
         data.get("target_conversation_id")
@@ -2081,11 +2070,9 @@ async def import_conversation_state_bundle(request: Request, data: dict = Body(.
 
     library_ids = config.get("mounted_library_ids") or [mount.get("library_id") for mount in data.get("mounts", []) if mount.get("library_id")]
     if library_ids:
-        await set_conversation_mounts(
-            db_path,
+        await repo.set_conversation_mounts(
             conversation_id=target_conversation_id,
             library_ids=library_ids,
-            write_library_id=config.get("write_library_id"),
         )
 
     if overwrite_state:
@@ -2238,14 +2225,14 @@ async def import_memory_library(data: dict = Body(...)):
     """Import a memory library from exported JSON."""
     from app.core.ids import generate_id
     from app.core.state import get_config
-    from app.storage.sqlite_cards import create_memory_library, insert_card, insert_card_version
+    from app.storage import get_repository
 
     cfg = get_config()
     db_path = cfg.storage.sqlite.memory_db
+    repo = get_repository()
 
     library_data = data.get("library", {})
-    new_library_id = await create_memory_library(
-        db_path,
+    new_library_id = await repo.create_memory_library(
         name=library_data.get("name") or "导入的记忆库",
         description=library_data.get("description", ""),
     )
@@ -2253,24 +2240,23 @@ async def import_memory_library(data: dict = Body(...)):
     imported = 0
     for card in data.get("cards", []):
         card_id = generate_id("card_")
-        await insert_card(
-            db_path,
-            card_id=card_id,
-            library_id=new_library_id,
-            user_id=card.get("user_id", "default_user"),
-            character_id=card.get("character_id"),
-            conversation_id=card.get("conversation_id"),
-            scope=card.get("scope", "global"),
-            card_type=card.get("card_type", "preference"),
-            content=card.get("content", ""),
-            title=card.get("title"),
-            summary=card.get("summary"),
-            importance=float(card.get("importance", 0.5)),
-            confidence=float(card.get("confidence", 0.7)),
-            status=card.get("status", "approved"),
-            is_pinned=int(card.get("is_pinned", 0)),
-            evidence_text=card.get("evidence_text"),
-        )
+        await repo.insert_card(card={
+            "card_id": card_id,
+            "library_id": new_library_id,
+            "user_id": card.get("user_id", "default_user"),
+            "character_id": card.get("character_id"),
+            "conversation_id": card.get("conversation_id"),
+            "scope": card.get("scope", "global"),
+            "card_type": card.get("card_type", "preference"),
+            "content": card.get("content", ""),
+            "title": card.get("title"),
+            "summary": card.get("summary"),
+            "importance": float(card.get("importance", 0.5)),
+            "confidence": float(card.get("confidence", 0.7)),
+            "status": card.get("status", "approved"),
+            "is_pinned": int(card.get("is_pinned", 0)),
+            "evidence_text": card.get("evidence_text"),
+        })
         imported += 1
 
     return {"status": "ok", "library_id": new_library_id, "imported_cards": imported}
@@ -2422,10 +2408,12 @@ async def import_sillytavern(request: Request, data: dict = Body(...)):
     from app.core.ids import generate_id
     from app.core.state import get_config
     from app.importers.sillytavern import parse_sillytavern_jsonl
-    from app.storage.sqlite_app import init_app_db, upsert_conversation
-    from app.storage.sqlite_conversation import init_chat_db, save_turn_and_messages
+    from app.storage import get_repository
+    from app.storage.sqlite_app import init_app_db
+    from app.storage.sqlite_conversation import init_chat_db
 
     cfg = get_config()
+    repo = get_repository()
     text = data.get("content", "")
     if not text:
         raise HTTPException(status_code=400, detail="content is required (JSONL text)")
@@ -2444,10 +2432,7 @@ async def import_sillytavern(request: Request, data: dict = Body(...)):
 
     await init_app_db(cfg.storage.sqlite.app_db)
     await init_chat_db(chat_db_path)
-    await upsert_conversation(
-        cfg.storage.sqlite.app_db, conversation_id,
-        user_id, character_id, "sillytavern_import", conv_dir,
-    )
+    await repo.upsert_conversation(conversation_id, character_id)
 
     messages = []
     if conv.system_prompt:
@@ -2457,8 +2442,16 @@ async def import_sillytavern(request: Request, data: dict = Body(...)):
 
     turn_id = generate_id("turn_")
     request_id = generate_id("req_import_")
-    await save_turn_and_messages(
-        chat_db_path, turn_id, conversation_id, user_id, character_id, request_id, 0, messages,
+    await repo.save_turn_and_messages(
+        conversation_id,
+        turn_data={
+            "turn_id": turn_id,
+            "user_id": user_id,
+            "character_id": character_id,
+            "request_id": request_id,
+            "turn_index": 0,
+        },
+        messages=messages,
     )
 
     return {
@@ -2477,16 +2470,17 @@ async def extract_memories_from_import(conversation_id: str, request: Request, d
     from app.core.state import get_config
     from app.memory.card_extractor import extract_and_route
     from app.memory.judge import MemoryJudgeConfigView
-    from app.storage.sqlite_conversation import get_all_messages
+    from app.storage import get_repository
 
     cfg = get_config()
+    repo = get_repository()
     from pathlib import Path
     chat_db_path = str(Path(cfg.storage.root_dir, "conversations", conversation_id, "chat.sqlite"))
 
     if not Path(chat_db_path).exists():
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    messages = await get_all_messages(chat_db_path, conversation_id)
+    messages = await repo.get_all_messages(conversation_id)
     pairs: list[tuple[str, str]] = []
     i = 0
     while i < len(messages) - 1:

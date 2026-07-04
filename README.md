@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CyrilPeng/KokoroMemo">GitHub</a> ·
+  <a href="https://github.com/YuNaitang/KokoroMemo">GitHub</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#接入客户端">接入客户端</a> ·
   <a href="#gui-功能概览">GUI 功能</a> ·
@@ -57,22 +57,16 @@ KokoroMemo 的目标不是简单地把聊天记录塞进向量库，而是用可
 
 如果配置端口 `14514` 不可用，后端会自动切换到可用端口。请以 GUI 中显示的 `OpenAI Base URL` 为准。
 
-后续更新可以在“设置 → 检查更新”中完成。KokoroMemo 会先读取 GitHub 更新清单，连接失败时可使用 Gitee 镜像；PC 端会匹配当前系统的安装包，点击“下载更新包”即可获取。
+后续更新可以在”设置 → 检查更新”中完成。KokoroMemo 会直接读取 GitHub 更新清单；PC 端会匹配当前系统的安装包，点击”下载更新包”即可获取。
 
 ### 方式二：Android / Termux 单包部署
 
 Android 用户建议下载 Release 中的单包压缩包，包内已包含后端源码、预构建 Web UI 和安装脚本，手机上不需要编译前端：
 
-**Termux 用户推荐直接使用 Gitee 一键安装：**
+如果你可以稳定访问 GitHub，可以使用 GitHub 地址：
 
 ```bash
-curl -fsSL https://gitee.com/Cyril_P/KokoroMemo/raw/main/scripts/termux-setup.sh | bash
-```
-
-如果你可以稳定访问 GitHub，也可以使用 GitHub 地址：
-
-```bash
-curl -fsSL https://github.com/CyrilPeng/KokoroMemo/raw/main/scripts/termux-setup.sh | bash
+curl -fsSL https://github.com/YuNaitang/KokoroMemo/raw/main/scripts/termux-setup.sh | bash
 ```
 
 一键脚本会自动安装 Termux 必要依赖、下载当前稳定版 `Android-Termux-aarch64` 包、安装并启动 KokoroMemo。脚本不会执行 `pkg upgrade` 全量系统升级，避免第一次安装额外下载大量 Termux 系统包。
@@ -136,7 +130,7 @@ bash update.sh
 - Rust/Tauri 环境（仅桌面开发需要）
 
 ```bash
-git clone https://github.com/CyrilPeng/KokoroMemo.git
+git clone https://github.com/YuNaitang/KokoroMemo.git
 cd KokoroMemo
 
 python -m venv .venv

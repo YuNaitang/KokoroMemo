@@ -20,8 +20,7 @@ from app.core.time_util import naive_local_now
 from app.memory.query_builder import RetrievalQuery
 from app.providers.embedding_base import EmbeddingProvider
 from app.memory.graph import get_active_edges_for_cards
-from app.storage.sqlite_cards import get_cards_by_ids, get_pinned_cards, get_recent_important_cards
-from app.storage.sqlite_cards import get_mounted_library_ids
+from app.storage import get_repository
 
 logger = logging.getLogger("kokoromemo.card_retriever")
 
@@ -96,16 +95,18 @@ async def retrieve_cards(
     seen_ids: set[str] = set()
     all_candidates: list[MemoryCandidate] = []
 
+    repo = get_repository()
+
     sf = query.scope_filter
     user_id = sf["user_id"]
     character_id = sf.get("character_id")
     conversation_id = sf.get("conversation_id")
-    mounted_library_ids = await get_mounted_library_ids(cards_db_path, conversation_id) if conversation_id else None
+    mounted_library_ids = await repo.get_mounted_library_ids(conversation_id) if conversation_id else None
     mounted_library_set = set(mounted_library_ids or [])
 
     # --- 路径 1：置顶 / 边界卡片 ---
     try:
-        pinned = await get_pinned_cards(cards_db_path, user_id, character_id, mounted_library_ids)
+        pinned = await repo.get_pinned_cards(user_id=user_id, character_id=character_id)
         for card in pinned:
             cid = card["card_id"]
             if cid in seen_ids:
@@ -152,7 +153,8 @@ async def retrieve_cards(
         results = lancedb_store.search(query_vector, where=where, top_k=vector_top_k)
 
         card_ids = [row.get("memory_id", "") for row in results if row.get("memory_id")]
-        sqlite_cards = await get_cards_by_ids(cards_db_path, card_ids)
+        cards_list = await repo.get_cards_by_ids(card_ids)
+        sqlite_cards = {c["card_id"]: c for c in cards_list}
 
         for row in results:
             cid = row.get("memory_id", "")
@@ -193,7 +195,7 @@ async def retrieve_cards(
 
     # --- 路径 3：近期重要卡片 ---
     try:
-        recent = await get_recent_important_cards(cards_db_path, user_id, character_id, library_ids=mounted_library_ids)
+        recent = await repo.get_recent_important_cards(user_id=user_id)
         for card in recent:
             cid = card["card_id"]
             if cid in seen_ids:
@@ -248,7 +250,8 @@ async def retrieve_cards(
 
         expand_ids -= seen_ids
         if expand_ids:
-            graph_cards = await get_cards_by_ids(cards_db_path, list(expand_ids))
+            graph_list = await repo.get_cards_by_ids(list(expand_ids))
+            graph_cards = {c["card_id"]: c for c in graph_list}
             for card in graph_cards.values():
                 if card.get("status") != "approved":
                     continue

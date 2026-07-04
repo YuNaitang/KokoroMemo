@@ -8,13 +8,8 @@ import logging
 from app.core.ids import generate_id
 from app.memory.judge import MemoryJudgeConfigView, judge_memories_with_llm
 from app.memory.review_policy import auto_review, determine_risk_level
-from app.storage.sqlite_cards import (
-    card_exists_with_content,
-    insert_card,
-    insert_card_version,
-    insert_inbox_item,
-    get_write_library_id,
-)
+from app.storage.sqlite_cards import get_write_library_id
+from app.storage import get_repository
 from app.storage.vector_sync import enqueue_card_vector_sync, sync_card_vector
 
 logger = logging.getLogger("kokoromemo.card_extractor")
@@ -46,6 +41,8 @@ async def extract_and_route(
     if not judge_config:
         return
 
+    repo = get_repository()
+
     try:
         extracted = await judge_memories_with_llm(
             user_message,
@@ -67,7 +64,7 @@ async def extract_and_route(
 
     for mem in extracted:
         # 去重：如果已存在相同内容则跳过
-        if await card_exists_with_content(db_path, user_id, mem.content):
+        if await repo.card_exists_with_content(user_id, mem.content):
             logger.debug("Skipping duplicate card: %s", mem.content[:50])
             continue
 
@@ -103,29 +100,26 @@ async def extract_and_route(
         if decision == "approve":
             # 直接批准：写入 memory_cards 并同步向量
             card_id = generate_id("card_")
-            await insert_card(
-                db_path,
-                card_id=card_id,
-                library_id=library_id,
-                user_id=user_id,
-                character_id=character_id,
-                conversation_id=conversation_id,
-                scope=mem.scope,
-                card_type=mem.memory_type,
-                content=mem.content,
-                importance=mem.importance,
-                confidence=mem.confidence,
-                status="approved",
-                evidence_text=user_message[:300],
-            )
-            await insert_card_version(
-                db_path,
-                card_id=card_id,
-                content=mem.content,
-                card_type=mem.memory_type,
-                importance=mem.importance,
-                confidence=mem.confidence,
-            )
+            await repo.insert_card(card={
+                "card_id": card_id,
+                "library_id": library_id,
+                "user_id": user_id,
+                "character_id": character_id,
+                "conversation_id": conversation_id,
+                "scope": mem.scope,
+                "card_type": mem.memory_type,
+                "content": mem.content,
+                "importance": mem.importance,
+                "confidence": mem.confidence,
+                "status": "approved",
+                "evidence_text": user_message[:300],
+            })
+            await repo.insert_card_version(card_id, card={
+                "content": mem.content,
+                "card_type": mem.memory_type,
+                "importance": mem.importance,
+                "confidence": mem.confidence,
+            })
 
             # 向量同步
             if embedding_provider and lancedb_store:
@@ -142,20 +136,19 @@ async def extract_and_route(
         elif decision == "pending":
             # 写入待审核列表供用户复核
             inbox_id = generate_id("inbox_")
-            await insert_inbox_item(
-                db_path,
-                inbox_id=inbox_id,
-                candidate_type="card",
-                payload_json=json.dumps(card_payload, ensure_ascii=False),
-                user_id=user_id,
-                character_id=character_id,
-                conversation_id=conversation_id,
-                suggested_action="approve",
-                risk_level=risk_level,
-                reason=f"记忆判断模型: {mem.memory_type}",
-                status="pending",
-                library_id=library_id,
-            )
+            await repo.insert_inbox_item(item={
+                "inbox_id": inbox_id,
+                "candidate_type": "card",
+                "payload_json": json.dumps(card_payload, ensure_ascii=False),
+                "user_id": user_id,
+                "character_id": character_id,
+                "conversation_id": conversation_id,
+                "suggested_action": "approve",
+                "risk_level": risk_level,
+                "reason": f"记忆判断模型: {mem.memory_type}",
+                "status": "pending",
+                "library_id": library_id,
+            })
             logger.info("Card sent to inbox: %s (type=%s, risk=%s)", inbox_id, mem.memory_type, risk_level)
             await _emit_card_event("inbox_new", inbox_id, mem)
 

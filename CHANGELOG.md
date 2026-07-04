@@ -24,7 +24,7 @@
 
 ### 改进
 
-- **多源更新回退** - 更新检测和 Android 更新脚本按 GitHub 直连、`https://gh-proxy.org/`、Gitee Release API 顺序回退，并移除无效的 Gitee `raw/main/latest.json` 地址，降低国内网络环境下无法检查或下载更新的问题。
+- **多源更新回退** - 更新检测和 Android 更新脚本按 GitHub 直连、`https://gh-proxy.org/` 顺序回退，降低网络异常时无法检查或下载更新的问题。
 - **GUI 更新入口** - 设置页改为读取统一更新清单，展示匹配安装包、更新来源，并提供下载更新包入口和 Android 一键更新命令提示。
 
 ### 修复
@@ -153,7 +153,7 @@
 
 ### 改进
 
-- **Termux 部署稳健性** - 安装脚本补充 `apt full-upgrade`、预编译 numpy、proot-distro Ubuntu 路径、原生 Termux 回退、克隆/下载/Gitee 多重回退，减少 ARM 设备依赖编译与网络失败。
+- **Termux 部署稳健性** - 安装脚本补充 `apt full-upgrade`、预编译 numpy、proot-distro Ubuntu 路径、原生 Termux 回退、多重下载回退，减少 ARM 设备依赖编译与网络失败。
 - **向量服务自动降级** - `get_lancedb_store` 在 LanceDB 不可用时回退到 SQLite 向量存储，向量同步、重建和检索链路兼容回退存储。
 - **Web/Tauri 地址解析** - Web UI 模式优先使用当前页面 origin，Tauri 模式兼容配置目录和工作目录中的 `.port` 文件。
 - **版本同步** - 同步 Python、Tauri、前端包和锁文件版本到 `0.5.6`，并补充打包后端的构建期版本兜底。
@@ -458,5 +458,5 @@
 
 ### 默认模型
 
-- Embedding：模力方舟 Qwen3-Embedding-8B（需自行注册 ai.gitee.com 获取 API Key）
+- Embedding：模力方舟 Qwen3-Embedding-8B（需自行注册 ModelArk 获取 API Key）
 - Rerank：模力方舟 Qwen3-Reranker-8B（默认关闭）

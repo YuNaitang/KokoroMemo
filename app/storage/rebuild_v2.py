@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from app.providers.embedding_base import EmbeddingProvider
-from app.storage.sqlite_cards import get_approved_cards
+from app.storage import get_repository
 
 logger = logging.getLogger("kokoromemo.rebuild_v2")
 
@@ -24,7 +24,8 @@ async def rebuild_vector_index_v2(
     leaves the live index untouched. Falls back to drop_and_recreate when the LanceDB
     backend does not support rename_table.
     """
-    cards = await get_approved_cards(cards_db_path)
+    repo = get_repository()
+    cards = await repo.get_approved_cards()
     if not cards:
         return {"status": "ok", "rebuilt": 0, "total": 0}
 

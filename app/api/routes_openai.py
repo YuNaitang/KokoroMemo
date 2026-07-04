@@ -25,17 +25,7 @@ from app.memory.state_table_filler import fill_conversation_state_tables
 from app.memory.state_table_renderer import render_state_tables
 from app.memory.state_updater import StateUpdaterContext, update_conversation_state
 from app.proxy.request_parser import resolve_context, RequestContext
-from app.storage.sqlite_app import init_app_db, upsert_character, upsert_conversation
-from app.storage.sqlite_cards import init_cards_db
-from app.storage.sqlite_conversation import (
-    init_chat_db,
-    save_raw_request,
-    save_raw_response,
-    save_injected_memory_log,
-    save_turn_and_messages,
-    get_turn_count,
-)
-from app.storage.sqlite_state import SQLiteStateStore, init_state_db
+from app.storage import get_repository
 
 logger = logging.getLogger("kokoromemo.proxy")
 
@@ -83,6 +73,8 @@ async def chat_completions(request: Request):
 
     await _persist_request(cfg, ctx, raw_body_for_persist)
 
+    repo = get_repository()
+
     # 记忆检索与注入
     messages = deepcopy(raw_body.get("messages", []))
     injected_messages = messages
@@ -101,6 +93,7 @@ async def chat_completions(request: Request):
             messages[i]["content"] = resolve_variables(msg["content"], **var_kwargs)
 
     state_items: list[ConversationStateItem] = []
+    from app.storage.sqlite_state import SQLiteStateStore
     state_store: SQLiteStateStore | None = None
     conversation_config = None
     if cfg.memory.enabled:
@@ -153,7 +146,7 @@ async def chat_completions(request: Request):
             )
             should_retrieve = True
             if cfg.memory.retrieval_gate.enabled:
-                turn_index = await get_turn_count(ctx.chat_db_path, ctx.conversation_id)
+                turn_index = await repo.get_turn_count(ctx.conversation_id)
                 decision = decide_retrieval(
                     RetrievalGateInput(
                         query=query,
@@ -288,37 +281,28 @@ async def _persist_injection(ctx: RequestContext, injected_messages: list[dict],
 
     try:
         card_ids = [getattr(candidate, "card_id", "") for candidate in candidates]
-        await save_injected_memory_log(
-            ctx.chat_db_path,
-            generate_id("inj_"),
-            ctx.request_id,
-            ctx.conversation_id,
-            injected_text,
-            json.dumps([card_id for card_id in card_ids if card_id], ensure_ascii=False),
-        )
+        repo = get_repository()
+        await repo.save_injected_memory_log(ctx.conversation_id, data={
+            "injection_id": generate_id("inj_"),
+            "request_id": ctx.request_id,
+            "injected_text": injected_text,
+            "card_ids_json": json.dumps([card_id for card_id in card_ids if card_id], ensure_ascii=False),
+        })
     except Exception as e:
         logger.warning("Failed to persist injection log: %s", e)
 
 
 async def _persist_request(cfg, ctx: RequestContext, raw_body: dict) -> None:
     try:
-        await init_app_db(cfg.storage.sqlite.app_db)
-        await init_chat_db(ctx.chat_db_path)
-        await init_cards_db(cfg.storage.sqlite.memory_db)
-        await init_state_db(cfg.storage.sqlite.memory_db)
-        await upsert_conversation(
-            cfg.storage.sqlite.app_db, ctx.conversation_id,
-            ctx.user_id, ctx.character_id, ctx.client_name, ctx.conv_dir,
-        )
+        repo = get_repository()
+        await repo.upsert_conversation(ctx.conversation_id, ctx.character_id)
         if ctx.character_id:
-            await upsert_character(
-                cfg.storage.sqlite.app_db, ctx.character_id, ctx.user_id,
-            )
+            await repo.upsert_character(ctx.character_id, data={"user_id": ctx.user_id})
         await _apply_character_defaults_if_new(cfg, ctx)
-        await save_raw_request(
-            ctx.chat_db_path, ctx.request_id, ctx.conversation_id,
-            json.dumps(raw_body, ensure_ascii=False),
-        )
+        await repo.save_raw_request(ctx.conversation_id, data={
+            "request_id": ctx.request_id,
+            "body_json": json.dumps(raw_body, ensure_ascii=False),
+        })
     except Exception as e:
         logger.warning("Failed to persist request: %s", e)
 
@@ -328,21 +312,19 @@ async def _apply_character_defaults_if_new(cfg, ctx: RequestContext) -> None:
     if not ctx.character_id:
         return
     try:
-        from app.storage.sqlite_app import get_character_defaults
-        from app.storage.sqlite_cards import get_conversation_mounts, set_conversation_mounts
+        repo = get_repository()
         from app.storage.sqlite_state import SQLiteStateStore
 
-        mounts = await get_conversation_mounts(cfg.storage.sqlite.memory_db, ctx.conversation_id)
+        mounts = await repo.get_conversation_mounts(ctx.conversation_id)
         if mounts and any(m.get("library_id") != "lib_default" for m in mounts):
             return
 
-        defaults = await get_character_defaults(cfg.storage.sqlite.app_db, ctx.character_id)
+        defaults = await repo.get_character_defaults(ctx.character_id)
         if not defaults or not defaults.get("auto_apply"):
             return
 
         library_ids = defaults.get("library_ids") or ["lib_default"]
-        write_library_id = defaults.get("write_library_id") or library_ids[0]
-        await set_conversation_mounts(cfg.storage.sqlite.memory_db, ctx.conversation_id, library_ids, write_library_id)
+        await repo.set_conversation_mounts(ctx.conversation_id, library_ids)
 
         store = SQLiteStateStore(cfg.storage.sqlite.memory_db)
         await store.set_conversation_config({
@@ -363,21 +345,27 @@ async def _apply_character_defaults_if_new(cfg, ctx: RequestContext) -> None:
 async def _persist_and_extract(ctx: RequestContext, cfg, original_messages: list[dict], assistant_text: str, response_json: str | None, stream_text: str | None) -> None:
     """Save response and extract memories."""
     try:
+        repo = get_repository()
         resp_id = generate_id("resp_")
-        await save_raw_response(
-            ctx.chat_db_path, resp_id, ctx.request_id, ctx.conversation_id,
-            body_json=response_json, stream_text=stream_text,
-        )
+        await repo.save_raw_response(ctx.conversation_id, data={
+            "response_id": resp_id,
+            "request_id": ctx.request_id,
+            "body_json": response_json,
+            "stream_text": stream_text,
+        })
         # 将所有消息保存为一轮对话
         all_msgs = list(original_messages)
         if assistant_text:
             all_msgs.append({"role": "assistant", "content": assistant_text})
         turn_id = generate_id("turn_")
-        turn_index = await get_turn_count(ctx.chat_db_path, ctx.conversation_id)
-        await save_turn_and_messages(
-            ctx.chat_db_path, turn_id, ctx.conversation_id,
-            ctx.user_id, ctx.character_id, ctx.request_id, turn_index, all_msgs,
-        )
+        turn_index = await repo.get_turn_count(ctx.conversation_id)
+        await repo.save_turn_and_messages(ctx.conversation_id, turn_data={
+            "turn_id": turn_id,
+            "user_id": ctx.user_id,
+            "character_id": ctx.character_id,
+            "request_id": ctx.request_id,
+            "turn_index": turn_index,
+        }, messages=all_msgs)
     except Exception as e:
         logger.warning("Failed to persist response: %s", e)
         turn_id = None
@@ -385,6 +373,7 @@ async def _persist_and_extract(ctx: RequestContext, cfg, original_messages: list
     conversation_config = None
     if cfg.memory.enabled:
         try:
+            from app.storage.sqlite_state import SQLiteStateStore
             conversation_config = await SQLiteStateStore(cfg.storage.sqlite.memory_db).ensure_conversation_config(ctx.conversation_id)
         except Exception as e:
             logger.warning("Conversation policy loading failed during extraction (degraded): %s", e)
@@ -473,9 +462,6 @@ async def _persist_and_extract(ctx: RequestContext, cfg, original_messages: list
         return
     if not assistant_text:
         return
-
-    # 确保卡片数据库已初始化（可能与 _persist_request 并发）
-    await init_cards_db(cfg.storage.sqlite.memory_db)
 
     user_msg = _latest_user_message(original_messages)
 
