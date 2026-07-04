@@ -51,6 +51,7 @@ from app.core.config import load_config, resolve_config_path
 from app.core.logging import setup_logging
 from app.core.state import set_config
 from app.core.time_util import set_configured_timezone
+from app.storage import init_db, close_db, is_server_mode, get_repository
 
 
 @asynccontextmanager
@@ -67,9 +68,13 @@ async def lifespan(app: FastAPI):
     Path(cfg.storage.root_dir, "memory").mkdir(parents=True, exist_ok=True)
     Path(cfg.storage.root_dir, "vector_indexes").mkdir(parents=True, exist_ok=True)
 
+    # 初始化数据库和仓库
+    await init_db()
+    repo = get_repository()
+
     import logging
     logger = logging.getLogger("kokoromemo")
-    logger.info("KokoroMemo started on %s:%d", cfg.server.host, cfg.server.port)
+    logger.info("KokoroMemo started on %s:%d (mode=%s)", cfg.server.host, cfg.server.port, "server" if is_server_mode() else "file")
 
     # 安全提醒：未配置管理令牌时绑定非回环地址存在风险。
     if cfg.server.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -83,6 +88,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await close_db()
     logger.info("KokoroMemo shutting down")
 
 
