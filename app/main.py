@@ -156,6 +156,8 @@ def create_app() -> FastAPI:
             "http://localhost:5173",
             f"http://127.0.0.1:{cfg.server.webui_port}",
             f"http://localhost:{cfg.server.webui_port}",
+            f"http://127.0.0.1:{cfg.server.port}",
+            f"http://localhost:{cfg.server.port}",
             "tauri://localhost",
             "http://tauri.localhost",
         ]
