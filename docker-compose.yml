@@ -1,3 +1,9 @@
+# KokoroMemo Server 模式（PostgreSQL + pgvector）
+# 使用前需在 .env 中取消注释 KOKOROMEMO_DB_URL
+# 单容器 file 模式（SQLite + LanceDB）请使用：
+#   docker compose -f docker-compose.file.yml up -d
+# 或直接 docker run（免 .env 配置）
+
 services:
   app:
     build:
@@ -11,10 +17,12 @@ services:
     env_file:
       - .env
     environment:
-      - KOKOROMEMO_DB_URL=postgresql+asyncpg://kokoro:${DB_PASSWORD:-changeme}@db:5432/kokoromemo
       - KOKOROMEMO_DB_HOST=db
       - KOKOROMEMO_DB_USER=kokoro
       - KOKOROMEMO_DB_NAME=kokoromemo
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_BASE_URL=${LLM_BASE_URL}
     depends_on:
       db:
         condition: service_healthy
