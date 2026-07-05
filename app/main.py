@@ -156,25 +156,13 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     cfg = load_config()
-    if cfg.compatibility.cors_enabled:
-        allowed_origins = ["*"] if cfg.server.allow_remote_access else [
-            "http://127.0.0.1:14515",
-            "http://localhost:14515",
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-            f"http://127.0.0.1:{cfg.server.webui_port}",
-            f"http://localhost:{cfg.server.webui_port}",
-            f"http://127.0.0.1:{cfg.server.port}",
-            f"http://localhost:{cfg.server.port}",
-            "tauri://localhost",
-            "http://tauri.localhost",
-        ]
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=allowed_origins,
-            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            allow_headers=["*"],
-        )
+    # Docker 环境下始终允许所有来源（容器网络隔离保证了安全性）
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     return app
 
