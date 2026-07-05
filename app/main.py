@@ -164,8 +164,9 @@ def create_app() -> FastAPI:
 
         # 正常处理，给响应加 CORS 头
         response = await call_next(request)
-        if origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
     cfg = load_config()
