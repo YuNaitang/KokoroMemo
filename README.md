@@ -51,83 +51,47 @@ KokoroMemo 的目标不是简单地把聊天记录塞进向量库，而是用可
 ---
 ## 快速开始
 
-### 方式一：下载发行版
-
-前往 GitHub Releases 下载对应系统的桌面版本。启动后在设置页填写模型服务商的 Base URL、API Key 和模型名。
-
-如果配置端口 `14514` 不可用，后端会自动切换到可用端口。请以 GUI 中显示的 `OpenAI Base URL` 为准。
-
-后续更新可以在”设置 → 检查更新”中完成。KokoroMemo 会直接读取 GitHub 更新清单；PC 端会匹配当前系统的安装包，点击”下载更新包”即可获取。
-
-### 方式二：Android / Termux 单包部署
-
-Android 用户建议下载 Release 中的单包压缩包，包内已包含后端源码、预构建 Web UI 和安装脚本，手机上不需要编译前端：
-
-如果你可以稳定访问 GitHub，可以使用 GitHub 地址：
-
-```bash
-curl -fsSL https://github.com/YuNaitang/KokoroMemo/raw/main/scripts/termux-setup.sh | bash
-```
-
-一键脚本会自动安装 Termux 必要依赖、下载当前稳定版 `Android-Termux-aarch64` 包、安装并启动 KokoroMemo。脚本不会执行 `pkg upgrade` 全量系统升级，避免第一次安装额外下载大量 Termux 系统包。
-
-安装过程中如果 Termux 提示 `openssl.cnf` 等配置文件是否覆盖，脚本会默认保留当前配置并继续安装；如果虚拟环境创建失败，脚本会自动补齐 pip/ensurepip 组件后重试。
-
-Termux 端会固定使用不依赖 `pydantic-core` 的 `pydantic v1` 兼容组合，并以 `pip --no-deps` 安装应用依赖，避免在手机上编译 `pydantic-core` / Rust 扩展。如果你看到旧脚本正在下载 `pydantic_core-*.tar.gz`，请按 `Ctrl+C` 取消后重新运行上面的一键安装命令。
-
-为了避免首次安装卡在 GitHub 或镜像清单请求上，安装脚本默认不请求 `latest.json`，而是直接使用内置的当前稳定版本下载地址。安装完成后可用 `kokoromemo update` 检查后续更新。
-
-脚本内部会优先切换到清华 Termux 源，并在依赖安装失败时尝试其他镜像。如果仍然提示某个软件源连接失败，例如 `Unable to connect to linux.domainesia.com`，可以单独执行换源命令后再重试：
-
-```bash
-sed -i 's|^deb .*termux-main.*|deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main|' $PREFIX/etc/apt/sources.list
-pkg update -y
-```
-
-如果看到 Termux 正在下载大量系统包且速度很慢，可以先按 `Ctrl+C` 取消，执行上面的换源命令后重新运行一键安装。
-
-也可以手动下载 Release 中的单包：
-
-```text
-KokoroMemo-vX.Y.Z-Android-Termux-aarch64.tar.gz
-KokoroMemo-vX.Y.Z-Android-ProotUbuntu-aarch64.tar.gz
-```
-
-大多数现代手机请选择 `Android-Termux-aarch64`；如果 Termux 原生依赖安装失败，再尝试 `Android-ProotUbuntu-aarch64`。
-
-```bash
-tar -xzf KokoroMemo-vX.Y.Z-Android-Termux-aarch64.tar.gz
-cd KokoroMemo-X.Y.Z-Android-Termux-aarch64
-bash install.sh
-bash start.sh
-```
-
-一键安装完成后可以使用 `kokoromemo` 命令管理服务：
-
-```bash
-kokoromemo start
-kokoromemo stop
-kokoromemo update
-kokoromemo doctor
-```
-
-启动后浏览器打开 `http://127.0.0.1:14514`，AIRP 客户端填写 `http://127.0.0.1:14514/v1`。如果启动脚本输出了其他实际端口，请以实际输出为准。
-
-Android 包内置一键更新脚本：
-
-```bash
-bash update.sh
-```
-
-脚本会自动选择 Termux / ProotUbuntu 对应的 aarch64 包，并在更新前备份 `config.yaml` 和 `data/`。
-
-### 方式三：从源码运行
+### 使用 Docker（推荐）
 
 环境要求：
 
-- Python 3.11+
-- Node.js 20+
-- Rust/Tauri 环境（仅桌面开发需要）
+- Docker 24+（含 Docker Compose）
+- 支持 WSL2 或 Linux 容器
+
+#### 单容器运行（SQLite + LanceDB 文件模式）
+
+```bash
+# 构建镜像
+docker build -t kokoromemo .
+
+# 创建配置和数据目录
+mkdir -p config data
+
+# 运行
+docker run -d --name kokoromemo \
+  -p 14514:14514 \
+  -v “$(pwd)/config:/app/config” \
+  -v “$(pwd)/data:/app/data” \
+  kokoromemo
+
+# 检查状态
+curl http://localhost:14514/health
+```
+
+首次启动会自动创建持久化虚拟环境和 SQLite 数据库，后续重启秒级完成。
+
+#### 完整服务运行（PostgreSQL + pgvector 模式）
+
+```bash
+# 复制环境变量模板
+cp .env.example .env
+# 编辑 .env 填入 LLM_API_KEY 等配置
+
+# 启动（含 PostgreSQL 容器）
+docker compose up -d
+```
+
+### 从源码运行（开发用）
 
 ```bash
 git clone https://github.com/YuNaitang/KokoroMemo.git
@@ -137,37 +101,23 @@ python -m venv .venv
 .venv\Scripts\activate  # Windows
 # source .venv/bin/activate  # Linux/macOS
 
-pip install -e .
+pip install -e “.[full]”
 cd gui
 npm install
-```
+cd ..
 
-准备配置：
-
-```bash
+# 准备配置
 copy config.example.yaml config.yaml  # Windows
 # cp config.example.yaml config.yaml  # Linux/macOS
-```
 
-启动后端：
-
-```bash
+# 启动后端
 python -m app.main
+
+# 新终端启动前端开发服务器
+cd gui && npm run dev
 ```
 
-启动前端：
-
-```bash
-cd gui
-npm run dev
-```
-
-桌面开发模式：
-
-```bash
-cd gui
-npm run tauri dev
-```
+浏览器打开 `http://localhost:5173`，AIRP 客户端填写 `http://127.0.0.1:14514/v1`。
 
 ---
 
@@ -226,7 +176,7 @@ Embedding 默认使用模力方舟 `Qwen3-Embedding-8B`，需要自行配置 API
 
 - **OpenAI Base URL**：客户端应该填写的真实地址。
 - **本地监听端口**：后端当前实际监听端口，默认与 OpenAI Base URL 保持一致；点击“修改”可设置新端口，确认后会立即重启后端。
-- **检查更新**：读取发布清单；桌面端可下载匹配安装包，Android 端可使用 `bash update.sh` 一键更新。
+- **检查更新**：读取发布清单，获取最新版本信息。
 
 ### 记忆管理
 
@@ -271,7 +221,7 @@ Embedding 默认使用模力方舟 `Qwen3-Embedding-8B`，需要自行配置 API
 
 ### 导入导出
 
-支持导出记忆库、会话配置、状态板数据和挂载预设。桌面端会弹出保存位置选择框，Web 端使用浏览器下载能力。
+支持导出记忆库、会话配置、状态板数据和挂载预设。
 
 ---
 
@@ -280,19 +230,24 @@ Embedding 默认使用模力方舟 `Qwen3-Embedding-8B`，需要自行配置 API
 默认数据目录：
 
 ```text
+./config/
+└─ config.yaml         # 配置文件
+
 ./data/
-├─ conversations/   # 原始请求、回复和会话记录
-├─ memory/          # SQLite 记忆数据库
-└─ vector_indexes/  # LanceDB 向量索引（可重建）
+├─ .venv/              # 持久化 Python 虚拟环境
+├─ app.sqlite          # 应用数据库（记忆卡片会话状态）
+├─ conversations/      # 原始请求回复和会话记录
+├─ memory/             # 记忆数据
+└─ vector_indexes/     # LanceDB 向量索引（可重建）
 ```
 
 KokoroMemo 默认本地运行，不会主动上传你的数据库。真正发送给上游模型的是原始聊天请求以及被注入的记忆/状态内容。请根据你使用的模型服务商隐私政策自行判断敏感信息风险。
 
 备份时建议至少保存：
 
-- `data/memory/memory.sqlite`
+- `config/config.yaml`
+- `data/app.sqlite`
 - `data/conversations/`
-- `config.yaml`
 
 向量索引目录通常可以从 SQLite 重新构建。
 
