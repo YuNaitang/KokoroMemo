@@ -138,30 +138,32 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def cors_and_auth_middleware(request, call_next):
-        # OPTIONS 预检请求：直接返回 CORS 头
+        origin = request.headers.get("origin", "")
+
+        # OPTIONS 预检
         if request.method == "OPTIONS":
-            origin = request.headers.get("origin", "")
-            response = Response(status_code=204)
-            if origin:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-                response.headers["Access-Control-Max-Age"] = "600"
+            response = Response(status_code=204,
+                                headers={
+                                    "Access-Control-Allow-Origin": origin or "*",
+                                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                                    "Access-Control-Max-Age": "600",
+                                })
             return response
 
         # Admin 认证
         if request.url.path.startswith("/admin"):
             from app.core.state import get_config
-
             token = get_config().server.get_admin_token()
             if token and request.headers.get("authorization", "") != f"Bearer {token}":
-                response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
-                response.headers["Access-Control-Allow-Origin"] = request.headers.get("origin", "*")
-                return response
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized"},
+                    headers={"Access-Control-Allow-Origin": origin or "*"},
+                )
 
+        # 正常处理，给响应加 CORS 头
         response = await call_next(request)
-        # 给所有响应加 CORS 头
-        origin = request.headers.get("origin", "")
         if origin:
             response.headers["Access-Control-Allow-Origin"] = origin
         return response
