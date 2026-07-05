@@ -45,7 +45,7 @@ async def init_db() -> None:
     global _sessionmaker
     engine = get_engine()
     _sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    # file 模式：自动创建数据库文件
+    # file 模式：使用 legacy init 机制创建表结构
     if not is_server_mode():
         from app.storage.sqlite_app import init_app_db
         from app.storage.sqlite_cards import init_cards_db

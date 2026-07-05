@@ -4,8 +4,6 @@
 gui/node_modules
 gui/src-tauri
 gui/dist
-gui/*.ts
-gui/*.json
 __pycache__
 *.pyc
 .pytest_cache
