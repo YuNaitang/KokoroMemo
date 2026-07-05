@@ -4,10 +4,10 @@ const DEFAULT_TIMEOUT_MS = 8000
 let _resolvedUrl: string | null = null
 
 export function getServerUrl() {
+  // Web 模式下始终使用同源地址，避免跨域 CORS 问题
+  if (!(window as any).__TAURI_INTERNALS__) return window.location.origin
   const stored = localStorage.getItem('kokoromemo.serverUrl')
   if (_resolvedUrl) return _resolvedUrl
-  // Web 模式由后端提供前端页面，直接使用同源地址。
-  if (!(window as any).__TAURI_INTERNALS__) return window.location.origin
   if (stored) return stored
   return DEFAULT_SERVER_URL
 }
