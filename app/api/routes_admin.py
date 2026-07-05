@@ -132,15 +132,7 @@ def _require_admin(request: Request) -> None:
     token = cfg.server.get_admin_token()
     client_host = request.client.host if request.client else None
     if not token:
-        if not _is_loopback(client_host) and not cfg.server.allow_remote_access:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Admin endpoint refused: no admin_token configured and remote access "
-                    "not explicitly allowed (set server.allow_remote_access=true or "
-                    "configure ADMIN_TOKEN)."
-                ),
-            )
+        # 没有配置 ADMIN_TOKEN 时，不限制来源（Docker 环境下 client host 可能是网关 IP）
         return
     auth = request.headers.get("authorization", "")
     if auth != f"Bearer {token}":
