@@ -139,12 +139,20 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def admin_auth_middleware(request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
         if request.url.path.startswith("/admin"):
             from app.core.state import get_config
 
             token = get_config().server.get_admin_token()
             if token and request.headers.get("authorization", "") != f"Bearer {token}":
-                return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+                response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+                origin = request.headers.get("origin", "")
+                if origin:
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+                return response
         return await call_next(request)
 
     cfg = load_config()
