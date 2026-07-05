@@ -41,8 +41,7 @@ def _read_version() -> str:
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import Response
@@ -138,31 +137,36 @@ def create_app() -> FastAPI:
             return response
 
     @app.middleware("http")
-    async def admin_auth_middleware(request, call_next):
+    async def cors_and_auth_middleware(request, call_next):
+        # OPTIONS 预检请求：直接返回 CORS 头
         if request.method == "OPTIONS":
-            return await call_next(request)
+            origin = request.headers.get("origin", "")
+            response = Response(status_code=204)
+            if origin:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+                response.headers["Access-Control-Max-Age"] = "600"
+            return response
+
+        # Admin 认证
         if request.url.path.startswith("/admin"):
             from app.core.state import get_config
 
             token = get_config().server.get_admin_token()
             if token and request.headers.get("authorization", "") != f"Bearer {token}":
                 response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
-                origin = request.headers.get("origin", "")
-                if origin:
-                    response.headers["Access-Control-Allow-Origin"] = origin
-                    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-                    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+                response.headers["Access-Control-Allow-Origin"] = request.headers.get("origin", "*")
                 return response
-        return await call_next(request)
+
+        response = await call_next(request)
+        # 给所有响应加 CORS 头
+        origin = request.headers.get("origin", "")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        return response
 
     cfg = load_config()
-    # Docker 环境下始终允许所有来源（容器网络隔离保证了安全性）
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
     return app
 
