@@ -44,7 +44,6 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.responses import Response
 
 from app.core.config import load_config, resolve_config_path
 from app.core.logging import setup_logging
@@ -96,6 +95,65 @@ app.state.app_version = app.version
 app.state.actual_port = None
 
 
+class CORSASGIMiddleware:
+    """ASGI 中间件：给所有响应加 CORS 头，处理 OPTIONS 预检。"""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        origin = ""
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"origin":
+                origin = value.decode()
+                break
+
+        # OPTIONS 预检直接返回
+        if scope["method"] == "OPTIONS":
+            headers = [
+                (b"access-control-allow-origin", origin.encode() if origin else b"*"),
+                (b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+                (b"access-control-allow-headers", b"Content-Type, Authorization"),
+                (b"access-control-max-age", b"600"),
+                (b"content-length", b"0"),
+            ]
+            await send({"type": "http.response.start", "status": 204, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        # Admin 认证拦截
+        path = scope.get("path", "")
+        if path.startswith("/admin"):
+            from app.core.state import get_config
+            token = get_config().server.get_admin_token()
+            auth_header = ""
+            for name, value in scope.get("headers", []):
+                if name.lower() == b"authorization":
+                    auth_header = value.decode()
+                    break
+            if token and auth_header != f"Bearer {token}":
+                body = b'{"detail":"Unauthorized"}'
+                headers = [
+                    (b"content-type", b"application/json"),
+                    (b"access-control-allow-origin", origin.encode() if origin else b"*"),
+                ]
+                await send({"type": "http.response.start", "status": 401, "headers": headers})
+                await send({"type": "http.response.body", "body": body})
+                return
+
+        # 代理 send 加入 CORS 头
+        async def send_with_cors(message):
+            if message["type"] == "http.response.start" and origin:
+                message["headers"] = list(message.get("headers", []))
+                message["headers"].append((b"access-control-allow-origin", origin.encode()))
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
+
+
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用。"""
     from app.api.routes_admin import router as admin_router
@@ -106,7 +164,13 @@ def create_app() -> FastAPI:
     app.include_router(openai_router)
     app.include_router(ws_router)
 
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    return app
+
+
+# 导入时自动完成 FastAPI 应用配置。
+create_app()
+# 用 ASGI 中间件包装 app 处理 CORS（避免 Starlette BaseHTTPMiddleware 响应头不可变问题）
+app = CORSASGIMiddleware(app)  # type: ignore[assignment]
 
     class CacheStaticFiles(StaticFiles):
         def file_response(self, *args, **kwargs) -> Response:
@@ -135,39 +199,6 @@ def create_app() -> FastAPI:
             response = FileResponse(_gui_dist / "index.html")
             response.headers.setdefault("Cache-Control", "no-cache")
             return response
-
-    @app.middleware("http")
-    async def cors_and_auth_middleware(request, call_next):
-        origin = request.headers.get("origin", "")
-
-        # OPTIONS 预检
-        if request.method == "OPTIONS":
-            response = Response(status_code=204,
-                                headers={
-                                    "Access-Control-Allow-Origin": origin or "*",
-                                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-                                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                                    "Access-Control-Max-Age": "600",
-                                })
-            return response
-
-        # Admin 认证
-        if request.url.path.startswith("/admin"):
-            from app.core.state import get_config
-            token = get_config().server.get_admin_token()
-            if token and request.headers.get("authorization", "") != f"Bearer {token}":
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Unauthorized"},
-                    headers={"Access-Control-Allow-Origin": origin or "*"},
-                )
-
-        # 正常处理，给响应加 CORS 头
-        response = await call_next(request)
-        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        return response
 
     cfg = load_config()
 
